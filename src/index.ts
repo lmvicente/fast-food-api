@@ -3,26 +3,37 @@ import 'dotenv/config'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { drizzle } from 'drizzle-orm/postgres-js'
+import postgres from 'postgres'
 import { restaurants, menuItems } from '../drizzle/schema.js'
 import { eq, and, sql } from 'drizzle-orm'
 
 const app = new Hono()
 export default app
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not defined in your environment variables");
-}
-const db = drizzle(process.env.DATABASE_URL);
+// 5432 is Supabase session mode, capped at 15 clients. 6543 shares connections.
+const databaseUrl = process.env.DATABASE_URL?.replace(
+  'pooler.supabase.com:5432',
+  'pooler.supabase.com:6543',
+)
+const db = databaseUrl
+  ? drizzle({ client: postgres(databaseUrl, { max: 1, prepare: false, ssl: 'require' }) })
+  : undefined
 
-const allRestaurants = await db.select().from(restaurants);
+app.onError((err, c) => {
+  console.error(err)
+  return c.json({ error: err.message }, 500)
+})
 
-//this one gives all restaurants
-app.get('/restaurants', (c) => {
-  return c.json(allRestaurants)
+app.get('/', (c) => c.json({ ok: true }))
+
+app.get('/restaurants', async (c) => {
+  if (!db) return c.json({ error: 'DATABASE_URL is not defined' }, 500)
+  return c.json(await db.select().from(restaurants))
 })
 
 //this one gives all items in a specific restaurant
 app.get('/menu-items/:restaurantId', async (c) => {
+  if (!db) return c.json({ error: 'DATABASE_URL is not defined' }, 500)
   const restaurantId = c.req.param('restaurantId')
   const allMenuItems = await db.select().from(menuItems).where(eq(menuItems.restaurantId, parseInt(restaurantId)))
   return c.json(allMenuItems)
@@ -35,6 +46,7 @@ app.get('/menu-items/:restaurantId/:category', async (c) => {
   if(!category) {
     return c.json({ error: 'Category is required' }, 400)
   }
+  if (!db) return c.json({ error: 'DATABASE_URL is not defined' }, 500)
   const allMenuItems = await db.select().from(menuItems).where(and(eq(menuItems.restaurantId, parseInt(restaurantId)), eq(sql`lower(${menuItems.category})`, sql`lower(${category})`)))
   if(!allMenuItems) {
     return c.json({ error: 'Menu items not found' }, 404)
@@ -50,6 +62,7 @@ app.get('/menu-items/:restaurantId/:category/:itemId', async (c) => {
   const restaurantId = c.req.param('restaurantId')
   const category = c.req.param('category')
   const itemId = c.req.param('itemId')
+  if (!db) return c.json({ error: 'DATABASE_URL is not defined' }, 500)
   const menuItem = await db.select().from(menuItems).where(and(eq(menuItems.restaurantId, parseInt(restaurantId)), eq(sql`lower(${menuItems.category})`, sql`lower(${category})`), eq(menuItems.id, parseInt(itemId))))
   if(!menuItem) {
     return c.json({ error: 'Menu item not found' }, 404)
