@@ -28,7 +28,7 @@ app.get('/', (c) => c.json({ ok: true }))
 
 app.get('/restaurants', async (c) => {
   if (!db) return c.json({ error: 'DATABASE_URL is not defined' }, 500)
-  return c.json(await db.select().from(restaurants))
+  return c.json(await db.select().from(restaurants).orderBy(x => x.name))
 })
 
 //this one gives all items in a specific restaurant
